@@ -1,0 +1,59 @@
+name: Build and Deploy
+on:
+  push:
+    branches:
+      - master
+jobs:
+  build_and_deploy:
+    name: Build and deploy
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Setup node
+        uses: actions/setup-node@v1
+        with:
+          node-version: 16
+      - name: Install dependencies
+        uses: cypress-io/github-action@v1
+        with:
+          runTests: false
+          cache-key: node${{ matrix.node }}-on-${{ runner.os }}-v2-hash-${{ hashFiles('yarn.lock') }}
+      - name: Lint
+        run: yarn lint
+      - name: Type check
+        run: yarn type-check
+      - name: Build the app
+        run: yarn build
+      - name: Push to bucket
+        uses: actions-hub/gcloud@master
+        env:
+          PROJECT_ID: {gcp-project-id}
+          APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          CLI: gsutil
+          with:
+            args: -m cp -z html,css,js,json,txt,xml,svg -r ./public/* gs://{bucket-id}/
+      - name: Set cache control on HTML files
+        uses: actions-hub/gcloud@master
+        env:
+          PROJECT_ID: {gcp-project-id}
+          APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          CLI: gsutil
+        with:
+          args: "-m setmeta -h 'Cache-Control: public, max-age=86400' 'gs://{bucket-id}/**/*.html' 'gs://{bucket-id}/**/*.json'"
+      - name: Set cache control on assets
+        uses: actions-hub/gcloud@master
+        env:
+          PROJECT_ID: {gcp-project-id}
+          APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          CLI: gsutil
+        with:
+          args: "-m setmeta -h 'Cache-Control: public, max-age=31536000' 'gs://{bucket-id}/**/*.js' 'gs://{bucket-id}/**/*.svg' 'gs://{bucket-id}/**/*.png' 'gs://{bucket-id}/**/*.webp'"
+      - name: Invalidate cache
+        uses: actions-hub/gcloud@master
+        if: success()
+        env:
+          PROJECT_ID: {gcp-project-id}
+          APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+        with:
+          args: "compute url-maps invalidate-cdn-cache {load-balancer-name} --path='/*'"
